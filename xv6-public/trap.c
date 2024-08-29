@@ -14,6 +14,14 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+	// •	이 반복문은 IDT의 0부터 255까지의 항목을 초기화합니다.
+	// •	SETGATE 매크로는 각각의 IDT 항목을 설정하는 데 사용됩니다.
+	// •	idt[i]는 i번째 인터럽트 또는 트랩의 디스크립터입니다.
+	// •	두 번째 인자인 0은 이 항목이 인터럽트 게이트임을 의미합니다 (1이면 트랩 게이트).
+	// •	SEG_KCODE << 3은 커널 코드 세그먼트 선택자입니다. << 3는 세그먼트의 위치를 지정합니다.
+	// •	vectors[i]는 i번째 인터럽트를 처리할 핸들러의 주소입니다.
+	// •	마지막 인자인 0은 Descriptor Privilege Level (DPL)을 설정합니다. 이 경우 DPL을 설정하지 않으므로 0입니다.
+
 void
 tvinit(void)
 {
