@@ -9,6 +9,8 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct queue;
+struct mlfq;
 
 // bio.c
 void            binit(void);
@@ -120,6 +122,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+void            enqueue(struct queue *queue, struct proc *p);
+struct proc*    dequeue(struct queue *queue);
+
 
 // swtch.S
 void            swtch(struct context**, struct context*);

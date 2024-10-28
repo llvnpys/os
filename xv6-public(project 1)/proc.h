@@ -60,3 +60,11 @@ struct proc {
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+
+// queue
+struct queue {
+  int level;
+  int time_quantum;
+  struct proc* procs[NPROC];
+  int count;
+};
