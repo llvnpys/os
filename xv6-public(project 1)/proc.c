@@ -147,7 +147,9 @@ userinit(void)
   // writes to be visible, and the lock is also needed
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
-
+  p->priority = 0;
+  p->queue_level = 0;
+  p->ticks = 0;
   p->state = RUNNABLE;
 
   release(&ptable.lock);
