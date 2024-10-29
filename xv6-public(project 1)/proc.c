@@ -138,12 +138,12 @@ void userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   // MLFQ 초기화
-  mlfq.queues[0].level = 0;
-  mlfq.queues[0].time_quantum = 4;
-  mlfq.queues[1].level = 1;
-  mlfq.queues[1].time_quantum = 6;
-  mlfq.queues[2].level = 2;
-  mlfq.queues[2].time_quantum = 8;
+  &mlfq.queues[0].level = 0;
+  &mlfq.queues[0].time_quantum = 4;
+  &mlfq.queues[1].level = 1;
+  &mlfq.queues[1].time_quantum = 6;
+  &mlfq.queues[2].level = 2;
+  &mlfq.queues[2].time_quantum = 8;
 
   p = allocproc();
 
@@ -356,6 +356,7 @@ int wait(void)
 void scheduler(void)
 {
   struct proc *p;
+  struct queue *q;
   struct cpu *c = mycpu();
   c->proc = 0;
 
@@ -366,6 +367,7 @@ void scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     {
       if (p->state != RUNNABLE)
@@ -570,29 +572,33 @@ void procdump(void)
 void 
 enqueue(struct queue *queue, struct proc *p)
 {
-    queue->procs[queue->count++] = p;
+  p->next = 0;
+
+  if(queue->count == 0) {
+    queue->head = p;
+    queue->tail = p;
+  } else {
+    queue->tail->next = p;
+    queue->tail = p;
+  }
+  queue->count++;
+  
 }
 
 // MLFQ 큐에서 프로세스 제거 (dequeue)
 struct proc *
 dequeue(struct queue *queue)
 {
-  if (queue->count > 0)
-  {
-    struct proc *p = queue->procs[0];
-
-    // 큐의 나머지 요소를 앞으로 이동
-    for (int i = 1; i < queue->count; i++)
-    {
-      queue->procs[i - 1] = queue->procs[i];
-    }
-    queue->count--;
-
-    return p;
-  }
-  else
-  {
-    cprintf("Error: Queue is empty, cannot dequeue process.\n");
+  if(queue->count == 0) {
     return 0;
   }
+
+  struct proc *p = queue->head;
+  
+  queue->head = p->next;
+  queue->count--;
+
+  p->next = 0;
+
+  return p;
 }

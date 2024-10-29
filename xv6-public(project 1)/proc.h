@@ -61,10 +61,16 @@ struct proc {
 //   fixed-size stack
 //   expandable heap
 
+struct queue_node {
+  struct proc *process;
+  struct queue_node *next;
+};
+
 // queue
 struct queue {
   int level;
   int time_quantum;
-  struct proc* procs[NPROC];
+  struct queue_node *head;
+  struct queue_node *tail;
   int count;
 };
