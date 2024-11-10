@@ -37,3 +37,16 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+
+// user mode에서 사용할 함수 정의
+void yield(void);
+int getLevel(void);
+void setPriority(int pid, int priority);
+void schedulerLock(int password);
+void schedulerUnlock(int password);
+
+
+// test
+int fork_children(void);
+int fork_children2(void);
+int fork_children3(void);

@@ -104,6 +104,13 @@ extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
 
+// mlfq에 필요한 system call 정의
+extern int sys_yield(void);
+extern int sys_getLevel(void);
+extern int sys_setPriority(void);
+extern int sys_schedulerLock(void);
+extern int sys_schedulerUnlock(void);
+
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -126,6 +133,13 @@ static int (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+
+// mlfq에 필요한 system call
+[SYS_yield]   sys_yield,
+[SYS_getLevel]  sys_getLevel,
+[SYS_setPriority] sys_setPriority,
+[SYS_schedulerLock] sys_schedulerLock,
+[SYS_schedulerUnlock] sys_schedulerUnlock,
 };
 
 void

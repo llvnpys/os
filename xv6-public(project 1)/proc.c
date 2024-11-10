@@ -23,6 +23,7 @@ struct
 static struct proc *initproc;
 
 int nextpid = 1;
+int scheduler_locked = 0;
 extern void forkret(void);
 extern void trapret(void);
 
@@ -262,6 +263,11 @@ void exit(void)
   struct proc *p;
   int fd;
 
+  if (scheduler_locked)
+  {
+    scheduler_locked = 0; // 락 해제
+  }
+
   if (curproc == initproc)
     panic("init exiting");
 
@@ -412,51 +418,63 @@ void scheduler(void)
 
     int index = 0;
 
-    while (index < 3)
+    if (scheduler_locked == 1)
     {
-      q = &mlfq.queues[index];
-      p = q->head;
-
-      int count = q->count;
-
-      for (int i = 0; i < count; i++)
-      {
-        if (p->state == RUNNABLE)
-          break;
-
-        if (p->state == ZOMBIE)
-        {
-          dequeue(q);
-        }
-        else if (q->level == 2)
-        {
-          p->queue_level = 0;
-          p->ticks = 0;
-          p->priority = 3;
-          enqueue(&mlfq.queues[0], dequeue(q));
-        }
-        else
-        {
-          enqueue(q, dequeue(q));
-        }
-
-        p = q->head;
-      }
-
-      if (p == 0 || p->state != RUNNABLE)
-      {
-        index++;
-        continue;
-      }
-
+      p = mlfq.queues[0].head;
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
       swtch(&(c->scheduler), p->context);
       c->proc = 0;
+    }
+    else
+    {
+      while (index < 3)
+      {
+        q = &mlfq.queues[index];
+        p = q->head;
 
-      switchkvm();
-      break;
+        int count = q->count;
+
+        for (int i = 0; i < count; i++)
+        {
+          if (p->state == RUNNABLE)
+            break;
+
+          if (p->state == ZOMBIE)
+          {
+            dequeue(q);
+          }
+          else if (q->level == 2)
+          {
+            p->queue_level = 0;
+            p->ticks = 0;
+            p->priority = 3;
+            enqueue(&mlfq.queues[0], dequeue(q));
+          }
+          else
+          {
+            enqueue(q, dequeue(q));
+          }
+
+          p = q->head;
+        }
+
+        if (p == 0 || p->state != RUNNABLE)
+        {
+          index++;
+          continue;
+        }
+
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        swtch(&(c->scheduler), p->context);
+        c->proc = 0;
+
+        switchkvm();
+        break;
+      }
     }
 
     release(&ptable.lock);
@@ -501,6 +519,10 @@ void yield(void)
   if (++mlfq.global_ticks >= 100)
   {
     priority_boosting();
+  }
+
+  else if (scheduler_locked == 1)
+  {
   }
 
   // demote
@@ -764,6 +786,9 @@ void priority_boosting(void)
 {
   struct queue *L0 = &mlfq.queues[0];
   struct queue *q;
+
+  scheduler_locked = 0;
+
   // L1, L2 프로세스를 L0로 이동
   for (int i = 1; i <= 2; i++)
   {
@@ -785,4 +810,113 @@ void priority_boosting(void)
   }
   // 글로벌 틱 초기화
   mlfq.global_ticks = 0;
+}
+
+int getLevel(void)
+{
+  struct proc *p = myproc();
+  return p->queue_level;
+}
+
+void setPriority(int pid, int priority)
+{
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    if (p->pid == pid)
+    {
+      p->priority = priority;
+      break;
+    }
+  }
+  release(&ptable.lock);
+}
+
+void schedulerLock(int password)
+{
+  struct proc *p = myproc();
+  struct queue *q = &mlfq.queues[p->queue_level];
+
+  // 학번 획인
+  if (password != 2020062860)
+  {
+    cprintf("Invalid password\n");
+    cprintf("pid : %d, ticks : %d, queue level : %d\n", p->pid, p->ticks, p->queue_level);
+    p->killed = 1;
+    return;
+  }
+
+  acquire(&ptable.lock);
+
+  // 현재 프로세스가 위치한 큐에서 제거
+  if (q->head == p)
+  {
+    // 큐의 head에 위치한 경우
+    q->head = p->next;
+    if (q->tail == p)
+      q->tail = p->next;
+  }
+  // 큐의 중간이나 끝에 위치한 경우
+  else
+  {
+
+    struct proc *prev = q->head;
+    while (prev != 0 && prev->next != p)
+    {
+      prev = prev->next;
+    }
+    if (prev != 0)
+    {
+      prev->next = p->next;
+      if (q->tail == p)
+        q->tail = prev;
+    }
+  }
+  q->count--; // 큐의 프로세스 수 감소
+
+  struct queue *L0 = &mlfq.queues[0];
+  p->priority = 3;
+  p->queue_level = 0;
+  p->ticks = 0;
+
+  // L0 큐의 맨 앞에 추가
+  p->next = L0->head;
+  L0->head = p;
+  if (L0->tail == 0)
+    L0->tail = p;
+
+  L0->count++;
+
+  release(&ptable.lock);
+
+  mlfq.global_ticks = 0;
+  scheduler_locked = 1;
+
+  cprintf("Scheduler lock acquired for PID %d\n", p->pid);
+}
+
+void schedulerUnlock(int password)
+{
+  struct proc *p = myproc();
+
+  // 학번 획인
+  if (password != 2020062860)
+  {
+    cprintf("Invalid password\n");
+    cprintf("pid : %d, ticks : %d, queue level : %d\n", p->pid, p->ticks, p->queue_level);
+    p->killed = 1;
+    return;
+  }
+
+  acquire(&ptable.lock);
+  p->priority = 3;
+  p->queue_level = 0;
+  p->ticks = 0;
+  release(&ptable.lock);
+
+  scheduler_locked = 0;
+
+  cprintf("Scheduler lock released for PID %d\n", p->pid);
 }

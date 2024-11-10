@@ -127,6 +127,11 @@ void            yield(void);
 void            enqueue(struct queue *queue, struct proc *p);
 struct proc*    dequeue(struct queue *queue);
 void            priority_boosting(void);
+int             getLevel(void);
+void            setPriority(int, int);
+void            schedulerLock(int);
+void            schedulerUnlock(int);
+
 
 
 // swtch.S

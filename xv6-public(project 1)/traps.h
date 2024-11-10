@@ -36,3 +36,6 @@
 #define IRQ_ERROR       19
 #define IRQ_SPURIOUS    31
 
+// 인터럽트 번호 설정
+#define T_SCHEDULERLOCK       129
+#define T_SCHEDULERUNLOCK     130

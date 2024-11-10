@@ -20,3 +20,10 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+
+// mlfq에 필요한 system call 번호 부여
+#define SYS_yield 22
+#define SYS_getLevel 23
+#define SYS_setPriority 24
+#define SYS_schedulerLock 25
+#define SYS_schedulerUnlock 26

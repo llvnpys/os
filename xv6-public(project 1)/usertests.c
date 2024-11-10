@@ -870,6 +870,7 @@ linkunlink()
 
   unsigned int x = (pid ? 1 : 97);
   for(i = 0; i < 100; i++){
+    
     x = x * 1103515245 + 12345;
     if((x % 3) == 0){
       close(open("x", O_RDWR | O_CREATE));
