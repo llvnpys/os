@@ -17,6 +17,7 @@ struct
 struct
 {
   struct queue queues[3];
+  int global_ticks;
 } mlfq;
 
 static struct proc *initproc;
@@ -97,12 +98,6 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
-  // 스케줄링 변수
-  p->priority = 0;
-  p->queue_level = 0;
-  p->ticks = 0;
-  enqueue(&mlfq.queues[0], p);
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -138,12 +133,12 @@ void userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   // MLFQ 초기화
-  &mlfq.queues[0].level = 0;
-  &mlfq.queues[0].time_quantum = 4;
-  &mlfq.queues[1].level = 1;
-  &mlfq.queues[1].time_quantum = 6;
-  &mlfq.queues[2].level = 2;
-  &mlfq.queues[2].time_quantum = 8;
+  mlfq.queues[0].level = 0;
+  mlfq.queues[0].time_quantum = 4;
+  mlfq.queues[1].level = 1;
+  mlfq.queues[1].time_quantum = 6;
+  mlfq.queues[2].level = 2;
+  mlfq.queues[2].time_quantum = 8;
 
   p = allocproc();
 
@@ -169,6 +164,12 @@ void userinit(void)
   // writes to be visible, and the lock is also needed
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
+
+  // 스케줄링 변수
+  p->priority = 3;
+  p->queue_level = 0;
+  p->ticks = 0;
+  enqueue(&mlfq.queues[0], p);
 
   p->state = RUNNABLE;
 
@@ -239,9 +240,12 @@ int fork(void)
 
   acquire(&ptable.lock);
 
-  np->priority = curproc->priority;
-  np->queue_level = curproc->queue_level;
-  np->ticks = curproc->ticks;
+  // 스케줄링 변수
+  np->priority = 3;
+  np->queue_level = 0;
+  np->ticks = 0;
+  enqueue(&mlfq.queues[0], np);
+
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -318,6 +322,43 @@ int wait(void)
       havekids = 1;
       if (p->state == ZOMBIE)
       {
+        // MLFQ 큐에서 현재 프로세스 제거
+        struct queue *q = &mlfq.queues[p->queue_level];
+        struct proc *prev = 0;
+        struct proc *current = q->head;
+
+        while (current != 0)
+        {
+
+          if (current == p)
+          {
+            // 중간인 경우
+            if (prev != 0)
+            {
+              prev->next = current->next;
+            }
+
+            // 종료 프로세스가 q의 head 인 경우
+            else
+            {
+              q->head = current->next;
+            }
+
+            // 맨 뒤인 경우
+            if (current == q->tail)
+            {
+              q->tail = prev;
+              prev->next = 0;
+            }
+
+            q->count--;
+            break;
+          }
+
+          prev = current;
+          current = current->next;
+        }
+
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
@@ -328,6 +369,7 @@ int wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
+
         release(&ptable.lock);
         return pid;
       }
@@ -368,25 +410,55 @@ void scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
 
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    {
-      if (p->state != RUNNABLE)
-        continue;
+    int index = 0;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+    while (index < 3)
+    {
+      q = &mlfq.queues[index];
+      p = q->head;
+
+      int count = q->count;
+
+      for (int i = 0; i < count; i++)
+      {
+        if (p->state == RUNNABLE)
+          break;
+
+        if (p->state == ZOMBIE)
+        {
+          dequeue(q);
+        }
+        else if (q->level == 2)
+        {
+          p->queue_level = 0;
+          p->ticks = 0;
+          p->priority = 3;
+          enqueue(&mlfq.queues[0], dequeue(q));
+        }
+        else
+        {
+          enqueue(q, dequeue(q));
+        }
+
+        p = q->head;
+      }
+
+      if (p == 0 || p->state != RUNNABLE)
+      {
+        index++;
+        continue;
+      }
+
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
-
       swtch(&(c->scheduler), p->context);
-      switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
       c->proc = 0;
+
+      switchkvm();
+      break;
     }
+
     release(&ptable.lock);
   }
 }
@@ -417,10 +489,48 @@ void sched(void)
 }
 
 // Give up the CPU for one scheduling round.
+// 큐 이동 & 부스팅이 일어나는 곳.
 void yield(void)
 {
+  struct proc *p = myproc();
+  struct queue *q = &mlfq.queues[p->queue_level];
+
   acquire(&ptable.lock); // DOC: yieldlock
+
+  // boosting
+  if (++mlfq.global_ticks >= 100)
+  {
+    priority_boosting();
+  }
+
+  // demote
+  else if (++p->ticks >= q->time_quantum)
+  {
+    if (q->level == 2)
+    {
+      if (p->priority > 0)
+      {
+        p->priority--;
+        p->ticks = 0;
+        enqueue(q, dequeue(q));
+      }
+    }
+
+    // q의 맨 뒤로 이동
+    else
+    {
+      p->queue_level++;
+      p->ticks = 0;
+      enqueue(&mlfq.queues[p->queue_level], dequeue(q));
+    }
+  }
+  else
+  {
+    enqueue(q, dequeue(q));
+  }
+
   myproc()->state = RUNNABLE;
+  // cprintf("yield end : PID %d, queue level %d, priority %d, ticks %d \n", p->pid,p->queue_level, p->priority, p->ticks);
   sched();
   release(&ptable.lock);
 }
@@ -531,7 +641,7 @@ int kill(int pid)
   return -1;
 }
 
-// PAGEBREAK: 36
+// PAGEBREAK: 365
 //  Print a process listing to console.  For debugging.
 //  Runs when user types ^P on console.
 //  No lock to avoid wedging a stuck machine further.
@@ -569,36 +679,110 @@ void procdump(void)
 }
 
 // MLFQ 큐에 프로세스 추가 (enqueue)
-void 
-enqueue(struct queue *queue, struct proc *p)
+void enqueue(struct queue *queue, struct proc *p)
 {
   p->next = 0;
 
-  if(queue->count == 0) {
-    queue->head = p;
-    queue->tail = p;
-  } else {
-    queue->tail->next = p;
-    queue->tail = p;
+  // FCFS + Priority 적용 (레벨 2인 경우)
+  if (queue->level == 2)
+  {
+    struct proc *current = queue->head;
+    struct proc *prev = 0;
+
+    // 큐가 비어있는 경우
+    if (queue->count == 0)
+    {
+      queue->head = p;
+      queue->tail = p;
+    }
+    else
+    {
+      // 큐 순회: priority가 같고 pid가 더 큰 위치 앞에 삽입
+      while (current != 0 && (current->priority < p->priority ||
+                              (current->priority == p->priority && current->pid < p->pid)))
+      {
+        prev = current;
+        current = current->next;
+      }
+
+      // 새로운 프로세스를 큐의 맨 앞에 삽입
+      if (prev == 0)
+      {
+        int i = 0;
+        p->next = queue->head;
+        queue->head = p;
+        i++;
+      }
+      else
+      {
+        prev->next = p;
+        p->next = current;
+        // 후순위
+        if (current == 0)
+        {
+          queue->tail = p;
+        }
+      }
+    }
   }
+  else
+  {
+    // 기본 RR 로직 (레벨 0, 1인 경우)
+    if (queue->count == 0)
+    {
+      queue->head = p;
+      queue->tail = p;
+    }
+    else
+    {
+      queue->tail->next = p;
+      queue->tail = p;
+    }
+  }
+
   queue->count++;
-  
 }
 
-// MLFQ 큐에서 프로세스 제거 (dequeue)
+// 큐의 맨 앞 프로세스 제거 (dequeue)
 struct proc *
 dequeue(struct queue *queue)
 {
-  if(queue->count == 0) {
-    return 0;
+  struct proc *p = queue->head;
+
+  queue->head = p->next;
+  if (queue->head == 0)
+  {
+    queue->tail = 0;
   }
 
-  struct proc *p = queue->head;
-  
-  queue->head = p->next;
   queue->count--;
-
   p->next = 0;
-
   return p;
+}
+
+void priority_boosting(void)
+{
+  struct queue *L0 = &mlfq.queues[0];
+  struct queue *q;
+  // L1, L2 프로세스를 L0로 이동
+  for (int i = 1; i <= 2; i++)
+  {
+    q = &mlfq.queues[i];
+    while (q->count > 0)
+    {
+      enqueue(L0, dequeue(q));
+    }
+  }
+
+  // L0의 모든 프로세스의 우선순위, 틱 초기화
+  struct proc *L0proc = L0->head;
+  for (int i = 0; i < L0->count; i++)
+  {
+    L0proc->priority = 3;
+    L0proc->queue_level = 0;
+    L0proc->ticks = 0;
+    L0proc = L0proc->next;
+  }
+  // 글로벌 틱 초기화
+  mlfq.global_ticks = 0;
 }

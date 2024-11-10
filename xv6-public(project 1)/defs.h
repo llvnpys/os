@@ -122,8 +122,11 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+
+// mlfq
 void            enqueue(struct queue *queue, struct proc *p);
 struct proc*    dequeue(struct queue *queue);
+void            priority_boosting(void);
 
 
 // swtch.S
