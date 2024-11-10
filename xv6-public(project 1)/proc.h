@@ -53,6 +53,7 @@ struct proc {
   int priority;
   int queue_level;
   int ticks;
+  struct proc *next;
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -61,16 +62,11 @@ struct proc {
 //   fixed-size stack
 //   expandable heap
 
-struct queue_node {
-  struct proc *process;
-  struct queue_node *next;
-};
-
 // queue
 struct queue {
   int level;
   int time_quantum;
-  struct queue_node *head;
-  struct queue_node *tail;
+  struct proc *head;
+  struct proc *tail;
   int count;
 };

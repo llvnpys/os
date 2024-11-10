@@ -99,13 +99,7 @@ exec(char *path, char **argv)
   curproc->sz = sz;
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
-
-  // 스케줄링 관련 변수 초기화
-  curproc->priority = 0;
-  curproc->queue_level = 0;
-  curproc->ticks = 0;
-
-
+  
   switchuvm(curproc);
   freevm(oldpgdir);
   return 0;
