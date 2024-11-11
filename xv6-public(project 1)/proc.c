@@ -23,6 +23,7 @@ struct
 static struct proc *initproc;
 
 int nextpid = 1;
+struct spinlock scheduler_lock;
 int scheduler_locked = 0;
 extern void forkret(void);
 extern void trapret(void);
@@ -32,6 +33,7 @@ static void wakeup1(void *chan);
 void pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&scheduler_lock, "scheduler");
 }
 
 // Must be called with interrupts disabled
@@ -263,9 +265,10 @@ void exit(void)
   struct proc *p;
   int fd;
 
-  if (scheduler_locked)
+  if (holding(&scheduler_lock))
   {
-    scheduler_locked = 0; // 락 해제
+    cprintf("Scheduler lock released for PID %d\n", myproc()->pid);
+    release(&scheduler_lock);
   }
 
   if (curproc == initproc)
@@ -417,64 +420,51 @@ void scheduler(void)
     acquire(&ptable.lock);
 
     int index = 0;
-
-    if (scheduler_locked == 1)
+    while (index < 3)
     {
-      p = mlfq.queues[0].head;
+      q = &mlfq.queues[index];
+      p = q->head;
+
+      int count = q->count;
+
+      for (int i = 0; i < count; i++)
+      {
+        if (p->state == RUNNABLE)
+          break;
+
+        if (p->state == ZOMBIE)
+        {
+          dequeue(q);
+        }
+        else if (q->level == 2)
+        {
+          p->queue_level = 0;
+          p->ticks = 0;
+          p->priority = 3;
+          enqueue(&mlfq.queues[0], dequeue(q));
+        }
+        else
+        {
+          enqueue(q, dequeue(q));
+        }
+
+        p = q->head;
+      }
+
+      if (p == 0 || p->state != RUNNABLE)
+      {
+        index++;
+        continue;
+      }
+
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
       swtch(&(c->scheduler), p->context);
       c->proc = 0;
-    }
-    else
-    {
-      while (index < 3)
-      {
-        q = &mlfq.queues[index];
-        p = q->head;
 
-        int count = q->count;
-
-        for (int i = 0; i < count; i++)
-        {
-          if (p->state == RUNNABLE)
-            break;
-
-          if (p->state == ZOMBIE)
-          {
-            dequeue(q);
-          }
-          else if (q->level == 2)
-          {
-            p->queue_level = 0;
-            p->ticks = 0;
-            p->priority = 3;
-            enqueue(&mlfq.queues[0], dequeue(q));
-          }
-          else
-          {
-            enqueue(q, dequeue(q));
-          }
-
-          p = q->head;
-        }
-
-        if (p == 0 || p->state != RUNNABLE)
-        {
-          index++;
-          continue;
-        }
-
-        c->proc = p;
-        switchuvm(p);
-        p->state = RUNNING;
-        swtch(&(c->scheduler), p->context);
-        c->proc = 0;
-
-        switchkvm();
-        break;
-      }
+      switchkvm();
+      break;
     }
 
     release(&ptable.lock);
@@ -521,8 +511,10 @@ void yield(void)
     priority_boosting();
   }
 
-  else if (scheduler_locked == 1)
+  else if (holding(&scheduler_lock))
   {
+    release(&ptable.lock);
+    return;
   }
 
   // demote
@@ -552,7 +544,6 @@ void yield(void)
   }
 
   myproc()->state = RUNNABLE;
-  // cprintf("yield end : PID %d, queue level %d, priority %d, ticks %d \n", p->pid,p->queue_level, p->priority, p->ticks);
   sched();
   release(&ptable.lock);
 }
@@ -787,7 +778,11 @@ void priority_boosting(void)
   struct queue *L0 = &mlfq.queues[0];
   struct queue *q;
 
-  scheduler_locked = 0;
+  if (holding(&scheduler_lock))
+  {
+    cprintf("Scheduler lock released for PID %d\n", myproc()->pid);
+    release(&scheduler_lock);
+  }
 
   // L1, L2 프로세스를 L0로 이동
   for (int i = 1; i <= 2; i++)
@@ -890,9 +885,9 @@ void schedulerLock(int password)
   L0->count++;
 
   release(&ptable.lock);
-
+  acquire(&scheduler_lock);
   mlfq.global_ticks = 0;
-  scheduler_locked = 1;
+  
 
   cprintf("Scheduler lock acquired for PID %d\n", p->pid);
 }
@@ -916,7 +911,7 @@ void schedulerUnlock(int password)
   p->ticks = 0;
   release(&ptable.lock);
 
-  scheduler_locked = 0;
+  release(&scheduler_lock);
 
   cprintf("Scheduler lock released for PID %d\n", p->pid);
 }
